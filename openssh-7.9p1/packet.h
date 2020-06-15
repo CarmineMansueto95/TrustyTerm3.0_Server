@@ -93,6 +93,9 @@ struct ssh {
 
 	/* APP data */
 	void *app_data;
+
+	u_char sig_hex[1024];
+	size_t s_hex_len;
 };
 
 typedef int (ssh_packet_hook_fn)(struct ssh *, struct sshbuf *,

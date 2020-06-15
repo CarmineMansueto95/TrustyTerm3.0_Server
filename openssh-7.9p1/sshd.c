@@ -140,7 +140,9 @@
 #define SESSION_SETUP_PATH_LEN 24
 #define TT_SESSION_TERMINATED_LEN 19
 #define TT_SID_LEN 511
-#define JSON_CHARS_LEN 87 // {"ssh_session_id":"","public_key":"","remote_ipaddr":"","username":"","tt_aes_key":""} e il \0 finale
+//#define JSON_CHARS_LEN 87 // {"ssh_session_id":"","public_key":"","remote_ipaddr":"","username":"","tt_aes_key":""} e il \0 finale
+#define JSON_CHARS_LEN 100 // {"ssh_session_id":"","public_key":"","remote_ipaddr":"","username":"","tt_aes_key":"","sig_hex":""} e il \0 finale
+
 /* ========================================================= */
 
 /* Re-exec fds */
@@ -2266,6 +2268,8 @@ main(int ac, char **av)
 	if (is_rsa == 0){
 		// se is_rsa è 0, è stata usata la Public Key Authentication
 
+		logit("SIGNATURE: %s", ssh->sig_hex);
+
 		uint8_t* tt_aes_key;
 		// Genero la tt_aes_key di 256 bit
 		generate_tt_aes_key(ssh);
@@ -2286,7 +2290,7 @@ main(int ac, char **av)
 		char session_setup_fifo_path[SESSION_SETUP_PATH_LEN] = SESSION_SETUP_FIFO_PATH;
 
 		//Save the session id in a local buffer as hex string
-		int ii = 0;
+		size_t ii = 0;
 		u_char session_id_buf[session_id_len*2+1];
 		while(ii < session_id_len){
 			sprintf(session_id_buf + ii*2, "%02x", session_id[ii]);
@@ -2298,8 +2302,9 @@ main(int ac, char **av)
 		char *remote_ipaddr = get_remote_ipaddr(ssh);
 
 		//Buffer containing all session setup data
-		char session_setup_data[JSON_CHARS_LEN + strlen(session_id_buf) + strlen(pub_key) + strlen(remote_ipaddr) + strlen(authctxt->user) + TT_AES_KEY_STR_LEN];
-		sprintf(session_setup_data, "{\"ssh_session_id\":\"%s\",\"public_key\":\"%s\",\"remote_ipaddr\":\"%s\",\"username\":\"%s\",\"tt_aes_key\":\"%s\"}", session_id_buf, pub_key, remote_ipaddr, authctxt->user, tt_aes_key_str);
+		char session_setup_data[JSON_CHARS_LEN + strlen(session_id_buf) + strlen(pub_key) + strlen(remote_ipaddr) + strlen(authctxt->user) + TT_AES_KEY_STR_LEN + ssh->s_hex_len];
+		//sprintf(session_setup_data, "{\"ssh_session_id\":\"%s\",\"public_key\":\"%s\",\"remote_ipaddr\":\"%s\",\"username\":\"%s\",\"tt_aes_key\":\"%s\"}", session_id_buf, pub_key, remote_ipaddr, authctxt->user, tt_aes_key_str);
+		sprintf(session_setup_data, "{\"ssh_session_id\":\"%s\",\"public_key\":\"%s\",\"remote_ipaddr\":\"%s\",\"username\":\"%s\",\"tt_aes_key\":\"%s\",\"sig_hex\":\"%s\"}", session_id_buf, pub_key, remote_ipaddr, authctxt->user, tt_aes_key_str, ssh->sig_hex);
 
 		//Free resources allocated to store public key
 		sshbuf_free(sb);
@@ -2398,16 +2403,6 @@ main(int ac, char **av)
 
 	/* Start session. */
 	do_authenticated(ssh, authctxt);
-
-	if(get_is_trustyterm(ssh)){
-		// Unlink FIFOs created for this session
-		if ((unlink(ssh2tt_session_fifo_path)) < 0){
-			fatal("unlink() failed. errno: %s", strerror(errno));
-		}
-		if ((unlink(tt2ssh_session_fifo_path)) < 0){
-			fatal("unlink() failed. errno: %s", strerror(errno));
-		}
-	}
 
 	/* The connection has been terminated. */
 	packet_get_bytes(&ibytes, &obytes);

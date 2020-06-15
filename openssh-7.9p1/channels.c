@@ -1956,7 +1956,6 @@ channel_handle_rfd(struct ssh *ssh, Channel *c,
 
 	errno = 0;
 	len = read(c->rfd, buf, sizeof(buf));
-	logit(buf);
 
 	
 	if (len < 0 && (errno == EINTR ||
@@ -2023,7 +2022,7 @@ channel_handle_rfd(struct ssh *ssh, Channel *c,
 
 		buf[TT_AES_IV_STR_LEN + len*2 + TT_AES_TAG_STR_LEN] = 'g';	// to tell to Proxy the end of ciphertext string, note that 'g' cannot be part of ciphertext because cannot be an 'hex' character
 		buf[TT_AES_IV_STR_LEN + len*2 + TT_AES_TAG_STR_LEN + 1] = '\0';
-		//logit("SSHD resp to Browser: %s", buf);
+		logit("SSHD resp to Browser: %s", buf);
 		len = TT_AES_IV_STR_LEN + len*2 + TT_AES_TAG_STR_LEN + 1;	// +1 for the ending 'g', not for the final '\0' which is not included in len
 
 		// ================================================================

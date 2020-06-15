@@ -190,6 +190,11 @@ userauth_pubkey(struct ssh *ssh)
 #ifdef DEBUG_PK
 		sshbuf_dump(b, stderr);
 #endif
+		// CUSTOM CODE: saving hex of signature in ssh->sig
+		authctxt->sig = (u_char*) malloc(slen*sizeof(u_char));
+		memcpy(authctxt->sig, sig, slen);
+		authctxt->siglen = slen;
+
 		/* test for correct signature */
 		authenticated = 0;
 		if (PRIVSEP(user_key_allowed(ssh, pw, key, 1, &authopts)) &&
@@ -198,6 +203,7 @@ userauth_pubkey(struct ssh *ssh)
 		    (ssh->compat & SSH_BUG_SIGTYPE) == 0 ? pkalg : NULL,
 		    ssh->compat)) == 0) {
 			authenticated = 1;
+
 		}
 		auth2_record_key(authctxt, authenticated, key);
 	} else {
