@@ -13,7 +13,8 @@ import signal, time, sys, os, re
 import posix_ipc
 import requests
 import _thread
-import threading, RLock
+import threading
+from threading import RLock
 
 from Crypto import Random
 import hashlib
@@ -36,26 +37,9 @@ SESSION_SETUP_SEM_PATH = "/dev/shm/sem.session_setup_semaphore"
 SESSION_SETUP_FIFO_PATH = "/tmp/session_setup_fifo"
 CMD_RUN_SSHD = "/usr/local/sbin/sshd"
 
-pk_ts_dict = {} # Keys are SSH_SIDs, Values are TT_SIDs
-mutex = RLock()	# For protecting pk_ts_dict from race conditions
+mutex = RLock()
+pubkey_ttsid_dict = {}
 
-auth_timeout = 0	# Will be substituted by the value in /etc/ssh/sshd_config 'LoginGraceTime' value
-
-def ssh_auth_read_timeout():
-	# Reading LoginGraceTime from /etc/ssh/sshd_config, and saving the value to the timeout variable (in seconds)
-	global auth_timeout
-
-	f = open("/etc/ssh/sshd_config", "r")
-	for row in f:
-		if("LoginGraceTime" in row):
-			s = row.strip().split(" ")
-			if(s[1].endswith('s')):
-				auth_timeout = s[1][:-1]
-			elif(s[1].endswith('m')):
-				auth_timeout = str(int(s[1][:-1])*60)
-			else:
-				print("Error: LoginGraceTime not well formatted!")
-				exit()
 
 def sessions_fifos_cleanup():
 	# Unlinking all the ssh2tt and tt2ssh FIFOs
@@ -120,7 +104,10 @@ class testHTTPServer_RequestHandler(BaseHTTPRequestHandler):
 				# I can send the decrypted SSH-SIG to Proxy to let it conclude SSH-AUTH
 				
 				json_obj = json.loads(decJSON)
+				username = json_obj["username"] # Username contained in the jSON, sent by the browser
 				pubkey = json_obj["pubkey"] # Public Key contained in the JSON, sent by the Browser
+				ssh_sig = json_obj["ssh-sig"]
+				
 				pubk = RSA.importKey(pubkey) # Public Key object to be used for signature verification
 				
 				JSONsig_bytes = bytes.fromhex(JSONsig_hex) #BytesArray of the signature of the JSON computed by the browser and sent as HTTP param
@@ -130,21 +117,26 @@ class testHTTPServer_RequestHandler(BaseHTTPRequestHandler):
 				
 				verifier.verify(h,JSONsig_bytes) # If it fails, it should throw an exception
 				
-				# If I am here, the verification succeeded (otherwise an exception would have been thrown
-
-				# Sending to Proxy the Decrypted Signature
-				requests.get(url = "https://" + ip_addr + "/trustyterm/decr_sig", params = {'TT_SID': tt_sid, 'DecrSig': json_obj["ssh-sig"]}, verify = False)
+				# If I am here, the verification succeeded (otherwise an exception would have been thrown)
 				
-				# Saving in the global dict the match between PubKey and TimeStamp
-				global pk_ts_dict
-				global mutex
-				
-				mutex.acquire()
-				pk_ts_dict[pubkey] = (datetime.now(),tt_sid)
-				mutex.release()
-				
-				return
-				
+				# Checking if Public Key is authorized for TrustyTerm, if there is I send back the decrypted signature
+				tt_authorized_keys_path = "/home/"+username+"/.ssh/tt_authorized_keys"
+				f = open(tt_authorized_keys_path, "r")
+				if pubkey in f.read():
+					
+					# Creating match between PublicKey and TT_SID
+					global pubkey_ttsid_dict
+					mutex.acquire()
+					pubkey_ttsid_dict[pubkey] = tt_sid
+					mutex.release()
+					
+					# Sending to Proxy the Decrypted Signature
+					requests.get(url = "https://" + ip_addr + "/trustyterm/decr_sig", params = {'TT_SID': tt_sid, 'DecrSig': ssh_sig}, verify = False)
+					return
+				else:
+					print("Trustyterm attempt with wrong key pair!!!")
+					return
+		
 
 			except Exception as e:
 				print(e)
@@ -152,6 +144,7 @@ class testHTTPServer_RequestHandler(BaseHTTPRequestHandler):
 				requests.get(url = "https://" + ip_addr + "/trustyterm/decr_sig", params = {'TT_SID': "", 'DecrSig': 'InvalidParams'}, verify = False)
 					
 				return
+
 		else:
 			print("[HTTPS Handler] Invalid HTTP params")
 			requests.get(url = "https://" + ip_addr + "/trustyterm/decr_sig", params = {'TT_SID': "", 'DecrSig': 'InvalidParams'}, verify = False)
@@ -234,18 +227,11 @@ def session_management(threadName, sshd_session):
 			_thread.exit()
 
 def main():
-	
-	print(threading.currentThread().name)
-	
+
 	signal.signal(signal.SIGINT, sigint_handler)
 	
 	# Unlinking pending session fifos
 	sessions_fifos_cleanup()
-	
-	ssh_auth_read_timeout()
-	
-	global auth_timeout
-	print("TrustyTerm AUTH timeout set to " + str(auth_timeout) + " secs")
 
 	#Starting thread for HTTP requests management
 	try:
@@ -295,63 +281,53 @@ def main():
 		with open(SESSION_SETUP_FIFO_PATH, 'r') as session_setup:
 			#Open and read data from session setup fifo
 			try:
-				dati_letti = session_setup.read()
-				print(dati_letti)
-				session_setup_data = json.loads(dati_letti)
+				session_setup_data = json.loads(session_setup.read())
 			except OSError as e:
 				print("[*] Error occured while parsing session setup data from sshd: %s" % e)
 				session_setup_sem.release()
 				continue
-
-			#Save all session setup data received from sshd
-			sshd_session['ssh_session_id'] = session_setup_data['ssh_session_id']
-			sshd_session['ssh2tt_fifo_name'] = "/tmp/ssh2tt_" + sshd_session['ssh_session_id']
-			sshd_session['tt2ssh_fifo_name'] = "/tmp/tt2ssh_" + sshd_session['ssh_session_id']
-			sshd_session['remote_ipaddr'] = session_setup_data['remote_ipaddr']
-			sshd_session['public_key'] = session_setup_data['public_key']
-			sshd_session['username'] = session_setup_data['username']
-			sshd_session['tt_aes_key'] = session_setup_data['tt_aes_key']   # 256 bit AES key produced by SSHD, to be sent to Browser as 'Shared Secret'
 			
-			#print(sshd_session)
-
 			#Once we've read from session_setup_fifo we can release the semaphore
 			session_setup_sem.release()
 			session_setup.close()
-			
 
-			# Here I have to check if this is a Trustyerm Session
-			global pk_ts_dict
-			global mutex
-			pubkey = sshd_session['public_key']
-			if(pubkey in pk_ts_dict):
-				# Dictionary has the PubKey, this could be a TrustyTerm session. I have to check the TimeStamp
-				currtime = datetime.now()
-				datetimeDifference = currtime - pk_ts_dict[pubkey][0] # Difference between the current time and the TimeStamp saved into the dictionary
-				diff_secs = datetimeDifference.total_seconds()
-				if(diff_secs < int(auth_timeout)):
-					# This means that the Proxy succesfully made SSH-AUTH in time, this is a TrustyTerm session
-					sshd_session['tt_session_id'] = pk_ts_dict[pubkey][1]
-					mutex.acquire()
-					del pk_ts_dict[pubkey]	# Once I know the nature of this session, I can just remove it from global dict
-					mutex.release()
-					tt_fifo_write("TT", sshd_session)
-					
-					#Starting thread for the management of the new session
-					try:
-						print("[*] Creation of a new thread for current session management")
-						_thread.start_new_thread(session_management, ("Thread-"+sshd_session['ssh_session_id'], sshd_session,))
-						print("[*] New session started from <" + sshd_session['remote_ipaddr'] + ">\n")
-					except OSError as e:
-						print ("[*] Unable to start a new thread: %s" % e)
-					
-				else:
-					# This means that the information in the dictionary is an old information, this is not a TrustyTerm session
-					mutex.acquire()
-					del pk_ts_dict[pubkey]
-					mutex.release()
-					tt_fifo_write("NTT", sshd_session)
+			# Going to check if it is a TrustyTerm Session
+			username = session_setup_data['username']
+			pubkey = session_setup_data['public_key']
+			tt_authorized_keys_path = "/home/"+username+"/.ssh/tt_authorized_keys"
+			f = open(tt_authorized_keys_path, "r")
+			if pubkey in f.read():
+
+				#Save all session setup data received from sshd
+				sshd_session['ssh_session_id'] = session_setup_data['ssh_session_id']
+				sshd_session['ssh2tt_fifo_name'] = "/tmp/ssh2tt_" + sshd_session['ssh_session_id']
+				sshd_session['tt2ssh_fifo_name'] = "/tmp/tt2ssh_" + sshd_session['ssh_session_id']
+				sshd_session['remote_ipaddr'] = session_setup_data['remote_ipaddr']
+				sshd_session['username'] = username
+				sshd_session['public_key'] = pubkey
+				sshd_session['tt_aes_key'] = session_setup_data['tt_aes_key']   # 256 bit AES key produced by SSHD, to be sent to Browser as 'Shared Secret'
+			
+				# Reading from global dict the TT_SID given the Public Key, and deleting the matching since it is no longer useful
+				global pubkey_ttsid_dict
+				mutex.acquire()
+				sshd_session["tt_session_id"] = pubkey_ttsid_dict[pubkey]
+				del pubkey_ttsid_dict[pubkey]
+				mutex.release()
+
+
+				# This is a TrustyTerm session
+				tt_fifo_write("TT", sshd_session)
+
+				#Starting thread for the management of the new session
+				try:
+					print("[*] Creation of a new thread for current session management")
+					_thread.start_new_thread(session_management, ("Thread-"+sshd_session['ssh_session_id'], sshd_session,))
+					print("[*] New session started from <" + sshd_session['remote_ipaddr'] + ">\n")
+				except OSError as e:
+					print ("[*] Unable to start a new thread: %s" % e)
+				
 			else:
-				# Public Key never appeared in the dictionary, this is not a TrustyTerm session for sure
+				# This is not a TrustyTerm session
 				tt_fifo_write("NTT", sshd_session)
 
 
