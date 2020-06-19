@@ -2,11 +2,10 @@ from IPy import IP
 from Crypto.Hash import SHA512
 from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
-from Crypto.Signature import PKCS1_v1_5 as Signature_PKCS1_v1_5	# for verifying signature of the Authorized IP addresses list
-from Crypto.Signature import pss	# for digitally signing Shared Secret
-from Crypto.Cipher import PKCS1_v1_5 as Cipher_PKCS1_v1_5	# for encrypting shared secret
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.Cipher import AES
+from Crypto.Signature import pss		# for checking signature of TrustyTerm Auth data and signing Shared Secret
+from Crypto.Cipher import PKCS1_OAEP	# for encrypting Shared Secret
+from Crypto.Cipher import AES			# for decrypting TrustyTerm Auth data
+from Crypto import Random
 import base64, binascii, json, ast
 import secrets, hashlib, random
 import signal, time, sys, os, re
@@ -16,7 +15,6 @@ import _thread
 import threading
 from threading import RLock
 
-from Crypto import Random
 import hashlib
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -24,8 +22,6 @@ from socketserver import ThreadingMixIn
 import ssl
 import urllib.parse
 from urllib.parse import urlparse, parse_qs
-
-from datetime import datetime
 
 #Disable warning because we don't want to verify the certificate in https requests
 requests.packages.urllib3.disable_warnings()
@@ -39,7 +35,6 @@ CMD_RUN_SSHD = "/usr/local/sbin/sshd"
 
 mutex = RLock()
 pubkey_ttsid_dict = {}
-
 
 def sessions_fifos_cleanup():
 	# Unlinking all the ssh2tt and tt2ssh FIFOs
@@ -183,7 +178,7 @@ def session_management(threadName, sshd_session):
 	
 	# Getting public key object to encrypt session parameters to send
 	rsa = RSA.importKey(sshd_session['public_key']) # Public Key of the Client (Browser)
-	cipher = Cipher_PKCS1_v1_5.new(rsa)
+	cipher = PKCS1_OAEP.new(rsa, hashAlgo=SHA256)
 
 	# Session setup data (JSON formatted) encryption using user public key
 	rsa_decrypted_data = "{\"tt_aes_key\": \"" + sshd_session['tt_aes_key'] +"\"}"
