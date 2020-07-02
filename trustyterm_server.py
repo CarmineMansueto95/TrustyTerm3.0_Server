@@ -198,8 +198,8 @@ def session_management(threadName, sshd_session):
 	#print("Base64 of signature of Shared Secret: " + signature_b64)
 
 	try:
-		#Send (base64 encoded) encrypted session setup data to proxy (session setup phase 2)
-		proxy_res = requests.get(url = "https://" + sshd_session['remote_ipaddr'] + "/trustyterm/server_session_setup", params = {'phase': 2, 'tt_session_id': sshd_session['tt_session_id'], 'encrypted_data': cipher_b64, 'signat': signature_b64}, verify = False)
+		#Send (base64 encoded) encrypted session setup data to proxy (session setup phase 1)
+		proxy_res = requests.get(url = "https://" + sshd_session['remote_ipaddr'] + "/trustyterm/server_session_setup", params = {'phase': 1, 'tt_session_id': sshd_session['tt_session_id'], 'encrypted_data': cipher_b64, 'signat': signature_b64}, verify = False)
 	except requests.exceptions.RequestException as e:
 		print("[*] Connection error: %s" % e)
 		_thread.exit()
