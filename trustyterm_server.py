@@ -286,6 +286,11 @@ def main():
 			session_setup_sem.release()
 			session_setup.close()
 
+			# Setting up FIFOs
+			sshd_session['ssh_session_id'] = session_setup_data['ssh_session_id']
+			sshd_session['ssh2tt_fifo_name'] = "/tmp/ssh2tt_" + sshd_session['ssh_session_id']
+			sshd_session['tt2ssh_fifo_name'] = "/tmp/tt2ssh_" + sshd_session['ssh_session_id']
+
 			# Going to check if it is a TrustyTerm Session
 			username = session_setup_data['username']
 			pubkey = session_setup_data['public_key']
@@ -294,9 +299,6 @@ def main():
 			if pubkey in f.read():
 
 				#Save all session setup data received from sshd
-				sshd_session['ssh_session_id'] = session_setup_data['ssh_session_id']
-				sshd_session['ssh2tt_fifo_name'] = "/tmp/ssh2tt_" + sshd_session['ssh_session_id']
-				sshd_session['tt2ssh_fifo_name'] = "/tmp/tt2ssh_" + sshd_session['ssh_session_id']
 				sshd_session['remote_ipaddr'] = session_setup_data['remote_ipaddr']
 				sshd_session['username'] = username
 				sshd_session['public_key'] = pubkey
